@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MovementLock — demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <h1>MovementLock — demo</h1>
+    <p>
+      Esta página simula un dispositivo que debe permanecer estático (ej. un
+      punto de venta). Si detecta movimiento sostenido de 1 km/h o más, se
+      bloquea toda interacción hasta ingresar el PIN de administrador
+      (por defecto: <code>1234</code>, cámbialo en <code>demo.js</code>).
+    </p>
+    <div id="status" class="status">Esperando permiso de geolocalización…</div>
+    <button id="startBtn">Iniciar monitoreo</button>
+  </div>
+
+  <script src="movement-lock.js"></script>
+  <script src="demo.js"></script>
+</body>
+</html>
