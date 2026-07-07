@@ -36,9 +36,9 @@
 
   // --- Cadencia y umbrales de bloqueo ------------------------------------
   const CADENCE_WINDOW_MS   = 2000; // ventana deslizante para pasos/min
-  const FAST_WALK_LOCK_SPM  = 120;  // cadencia = "caminar rápido" -> bloquea
-  const SLOW_WALK_UNLOCK_SPM = 90;  // cadencia por debajo de esto -> ya no es caminata rápida
-  // Entre 90 y 120 spm hay una zona muerta intencional (histéresis) para
+  const FAST_WALK_LOCK_SPM  = 30;   // cadencia = "caminar rápido" -> bloquea (calibrado para este caso de uso)
+  const SLOW_WALK_UNLOCK_SPM = 20;  // cadencia por debajo de esto -> ya no es caminata rápida
+  // Entre 20 y 30 spm hay una zona muerta intencional (histéresis) para
   // no parpadear bloqueo/desbloqueo justo en el borde.
 
   // Cuánto tiempo debe sostenerse la condición antes de actuar. Bloquear
