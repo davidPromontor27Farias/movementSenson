@@ -1,0 +1,140 @@
+
+  /* ---------------------------------------------------------------------
+   * Estilos base. Contenido de relleno: solo para que el prototipo
+   * se vea como una app real; no tiene lógica de negocio.
+   * ------------------------------------------------------------------- */
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: #0b0d12;
+    color: #e6e8ec;
+  }
+
+  .app {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+
+  .app h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .app p.subtitle { color: #9aa1b0; margin-top: 0; font-size: 0.9rem; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin: 20px 0;
+  }
+
+  .card {
+    background: #12151c;
+    border: 1px solid #262b36;
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+
+  .card .label { font-size: 0.72rem; color: #8890a0; text-transform: uppercase; letter-spacing: .04em; }
+  .card .value { font-size: 1.4rem; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .value.state-locked { color: #ff6b6b; }
+  .card .value.state-unlocked { color: #57d38c; }
+
+  canvas#fillerChart {
+    width: 100%;
+    height: 120px;
+    background: #12151c;
+    border: 1px solid #262b36;
+    border-radius: 12px;
+    display: block;
+  }
+
+  /* Panel de control / simulación --------------------------------------- */
+  .panel {
+    margin-top: 24px;
+    background: #12151c;
+    border: 1px solid #262b36;
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  .panel h2 { font-size: 1rem; margin: 0 0 12px; }
+
+  .row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+
+  .row label { font-size: 0.85rem; color: #c3c8d3; min-width: 150px; }
+
+  .row input[type="range"] { flex: 1; min-width: 160px; }
+
+  button {
+    padding: 9px 14px;
+    border-radius: 8px;
+    border: 1px solid #2f3746;
+    background: #1c2230;
+    color: #e6e8ec;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  button:hover { background: #242b3d; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: #1c2230;
+    color: #8890a0;
+  }
+  .badge.on { background: #16321f; color: #57d38c; }
+
+  /* ------------------------------------------------------------------- *
+   * CAPA DE BLOQUEO
+   * - position: fixed + inset 0  => cubre 100% ancho/alto siempre.
+   * - display:none por defecto; se activa con la clase .visible.
+   * - pointer-events: auto (heredado, por defecto) sobre un elemento que
+   *   cubre toda la pantalla y no reenvía eventos = bloquea totalmente
+   *   clicks/touch en lo que está debajo, sin necesidad de deshabilitar
+   *   cada control individualmente.
+   * - touch-action:none evita scroll/gestos táctiles residuales.
+   * ------------------------------------------------------------------- */
+  #lockOverlay {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: #000000;      /* opaca al 100%, sin transparencia */
+    z-index: 2147483647;      /* por encima de cualquier otro elemento */
+    touch-action: none;
+    user-select: none;
+    cursor: not-allowed;
+  }
+
+  #lockOverlay.visible { display: flex; }
+
+  #lockOverlay .msg {
+    text-align: center;
+    padding: 24px;
+  }
+
+  #lockOverlay .msg .icon {
+    font-size: 2.4rem;
+    margin-bottom: 12px;
+  }
+
+  #lockOverlay .msg h2 {
+    color: #ff5252;
+    font-size: 1.3rem;
+    margin: 0 0 6px;
+    letter-spacing: .02em;
+  }
+
+  #lockOverlay .msg p {
+    color: #9aa1b0;
+    font-size: 0.85rem;
+    margin: 0;
+  }
