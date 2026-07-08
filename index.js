@@ -44,12 +44,29 @@
   // inactivo y el comportamiento cae de vuelta al de solo-acelerómetro.
   const ROTATION_VETO_DPS = 90; // grados/seg; por encima de esto se considera "girando", no caminando
 
+  // Tras dejar de girar, se siguen ignorando pasos candidatos este tiempo.
+  // El frenado brusco de un giro (torso/muñeca) genera un pico de
+  // aceleración justo cuando la velocidad angular ya volvió a bajar del
+  // umbral, y ese pico por sí solo puede leerse como el inicio de un paso.
+  const ROTATION_COOLDOWN_MS = 300;
+
   // --- Cadencia y umbrales de bloqueo ------------------------------------
   const CADENCE_WINDOW_MS   = 2000; // ventana deslizante para pasos/min
   const FAST_WALK_LOCK_SPM  = 30;   // cadencia = "caminar rápido" -> bloquea (calibrado para este caso de uso)
   const SLOW_WALK_UNLOCK_SPM = 20;  // cadencia por debajo de esto -> ya no es caminata rápida
   // Entre 20 y 30 spm hay una zona muerta intencional (histéresis) para
   // no parpadear bloqueo/desbloqueo justo en el borde.
+
+  // BUG que causaba el bloqueo al girar sobre el propio eje: con
+  // CADENCE_WINDOW_MS = 2000, cadenceSpm = pasos_en_ventana * 30. Un único
+  // pico falso (p. ej. al girar el cuerpo con el dispositivo en mano) ya
+  // arroja 30 spm y se sostiene hasta 2s en la ventana — tiempo de sobra
+  // para cumplir LOCK_SUSTAIN_MS (1.5s) SIN que la persona haya caminado
+  // un solo paso real. Se exige un mínimo de pasos reales y rítmicos
+  // dentro de la ventana antes de considerar válida la cadencia de
+  // bloqueo, para que un giro puntual (1-2 picos, sin ritmo sostenido) no
+  // baste para bloquear.
+  const MIN_STEPS_FOR_LOCK = 3;
 
   // Cuánto tiempo debe sostenerse la condición antes de actuar. Bloquear
   // requiere más tiempo sostenido que desbloquear: un par de pasos rápidos
@@ -82,6 +99,7 @@
 
   let lastOrientationSample = null; // {beta, gamma, t}
   let orientationRate = 0;          // grados/seg, decae solo (ver tick())
+  let lastRotationTime = -Infinity; // performance.now() del último tick detectado como giro (para el cooldown)
 
   let simulationMode = false;
   let simulatedCadence = 0;
@@ -136,16 +154,20 @@
    * MÁQUINA DE HISTÉRESIS (sobre cadencia, no velocidad)
    * ===================================================================== */
   function processCadenceSample(spm) {
-    if (spm >= FAST_WALK_LOCK_SPM) {
+    // En modo simulación no hay stepTimestamps reales (el slider fija
+    // cadenceSpm directamente), así que el mínimo de pasos no aplica ahí.
+    const hasEnoughSteps = simulationMode || stepTimestamps.length >= MIN_STEPS_FOR_LOCK;
+
+    if (spm >= FAST_WALK_LOCK_SPM && hasEnoughSteps) {
       aboveCount += 1;
       belowCount = 0;
       if (aboveCount >= LOCK_CONSECUTIVE && !locked) lock();
-    } else if (spm <= SLOW_WALK_UNLOCK_SPM) {
+    } else if (spm <= SLOW_WALK_UNLOCK_SPM || !hasEnoughSteps) {
       belowCount += 1;
       aboveCount = 0;
       if (belowCount >= UNLOCK_CONSECUTIVE && locked) unlock();
     }
-    // en la zona muerta (90, 120) no se tocan los contadores
+    // en la zona muerta (20, 30), con suficientes pasos, no se tocan los contadores
   }
 
   /* =====================================================================
@@ -267,6 +289,12 @@
         // Girando sobre el propio eje: se descarta como candidato a paso y
         // se rearma el pulso, para no contar un "paso" falso justo al
         // terminar el giro (cuando la aceleración vuelve a bajar de golpe).
+        lastRotationTime = now;
+        inStepPulse = false;
+      } else if (now - lastRotationTime < ROTATION_COOLDOWN_MS) {
+        // Justo se dejó de girar: el frenado del giro puede producir un
+        // pico de aceleración que parece el inicio de un paso. Se sigue
+        // descartando un momento más antes de volver a detectar pasos.
         inStepPulse = false;
       } else {
         detectStep(magnitude, now);
