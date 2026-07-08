@@ -34,6 +34,16 @@
   const STEP_RESET_MS2     = 0.7;  // m/s^2 para poder detectar el siguiente
   const STEP_REFRACTORY_MS = 250;  // separación mínima entre pasos contados
 
+  // --- Veto por rotación (girar sobre el propio eje) --------------------
+  // El acelerómetro solo mide magnitud de aceleración: girar el torso o la
+  // muñeca sin caminar también produce picos que el detector de pasos
+  // puede confundir con pasos. El giroscopio (rotationRate) sí distingue
+  // "rotar" de "trasladarse caminando", así que mientras la velocidad
+  // angular del dispositivo sea alta, se ignoran los pasos candidatos.
+  // Si el navegador/dispositivo no reporta rotationRate, este veto queda
+  // inactivo y el comportamiento cae de vuelta al de solo-acelerómetro.
+  const ROTATION_VETO_DPS = 90; // grados/seg; por encima de esto se considera "girando", no caminando
+
   // --- Cadencia y umbrales de bloqueo ------------------------------------
   const CADENCE_WINDOW_MS   = 2000; // ventana deslizante para pasos/min
   const FAST_WALK_LOCK_SPM  = 30;   // cadencia = "caminar rápido" -> bloquea (calibrado para este caso de uso)
@@ -68,6 +78,7 @@
   let motionSupported = false;      // true en cuanto llega al menos un evento devicemotion útil
   let latestAccel = { x: 0, y: 0, z: 0, hasData: false, isLinear: false };
   let gravity = { x: 0, y: 0, z: 0, ready: false }; // estimación de gravedad (filtro paso-bajo) por eje
+  let latestRotationRate = { alpha: 0, beta: 0, gamma: 0, hasData: false }; // giroscopio, para vetar giros en el sitio
 
   let lastOrientationSample = null; // {beta, gamma, t}
   let orientationRate = 0;          // grados/seg, decae solo (ver tick())
@@ -171,6 +182,20 @@
 
     latestAccel = { x: lx, y: ly, z: lz, hasData: true, isLinear: linear };
     sourceReadout.textContent = linear ? 'Acelerómetro (lineal)' : 'Acelerómetro (+gravedad, filtrada)';
+
+    // Giroscopio: si el navegador lo reporta, se guarda para vetar pasos
+    // durante rotaciones (girar sobre el propio eje sin caminar).
+    const rr = e.rotationRate;
+    if (rr && (rr.alpha != null || rr.beta != null || rr.gamma != null)) {
+      latestRotationRate = { alpha: rr.alpha || 0, beta: rr.beta || 0, gamma: rr.gamma || 0, hasData: true };
+    }
+  }
+
+  function isRotatingInPlace() {
+    if (!latestRotationRate.hasData) return false; // sin giroscopio: no se puede vetar, se mantiene el comportamiento actual
+    const { alpha, beta, gamma } = latestRotationRate;
+    const angularSpeed = Math.sqrt(alpha * alpha + beta * beta + gamma * gamma);
+    return angularSpeed >= ROTATION_VETO_DPS;
   }
 
   function onDeviceOrientation(e) {
@@ -237,7 +262,15 @@
         magnitude = orientationRate * ORIENTATION_FALLBACK_SCALE;
         orientationRate *= 0.5; // decae tras el pico para no quedar "pegado"
       }
-      detectStep(magnitude, now);
+
+      if (isRotatingInPlace()) {
+        // Girando sobre el propio eje: se descarta como candidato a paso y
+        // se rearma el pulso, para no contar un "paso" falso justo al
+        // terminar el giro (cuando la aceleración vuelve a bajar de golpe).
+        inStepPulse = false;
+      } else {
+        detectStep(magnitude, now);
+      }
       computeCadence(now);
     }
     processCadenceSample(cadenceSpm);
