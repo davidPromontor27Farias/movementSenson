@@ -70,6 +70,17 @@
 
   const CADENCE_WINDOW_MS = 2000; // ventana deslizante solo para el indicador visual de pasos/min (no decide el bloqueo)
 
+  // --- Desbloqueo por contraseña ------------------------------------------
+  // Una vez que se bloquea, YA NO se desbloquea solo porque la racha de
+  // pasos se rompió (persona dejó de caminar): hace falta ingresar la
+  // contraseña correcta en el formulario de #lockOverlay. La racha rota
+  // solo reinicia el conteo de pasos, para exigir 5 pasos nuevos si se
+  // vuelve a caminar sin haber desbloqueado.
+  // NOTA: al vivir en JS de cliente, la contraseña es visible en el código
+  // fuente (view-source); esto es un candado de flujo de trabajo para el
+  // almacén, no una medida de seguridad real.
+  const UNLOCK_PASSWORD = 'Imperq3929planta';
+
   const ORIENTATION_FALLBACK_SCALE = 0.35; // escala empírica: grados/seg -> pseudo m/s^2
 
   /* =====================================================================
@@ -94,9 +105,6 @@
   let orientationRate = 0;          // grados/seg, decae solo (ver tick())
   let lastRotationTime = -Infinity; // performance.now() del último tick detectado como giro (para el cooldown)
 
-  let simulationMode = false;
-  let simulatedCadence = 0;
-
   let lastIntegrationTime = 0;
   let lastUIUpdateTime = 0;
 
@@ -111,12 +119,15 @@
   const streakReadout   = document.getElementById('streakReadout'); // racha de pasos reales consecutivos / umbral de bloqueo
   const btnPermission   = document.getElementById('btnPermission');
   const sensorBadge     = document.getElementById('sensorBadge');
-  const simToggle       = document.getElementById('simToggle');
-  const simBadge        = document.getElementById('simBadge');
-  const simSlider       = document.getElementById('simSlider');
-  const simValue        = document.getElementById('simValue');
   const chartCtx        = document.getElementById('fillerChart').getContext('2d');
   const chartHistory     = new Array(80).fill(0);
+
+  // Formulario de desbloqueo dentro de la capa de bloqueo. Opcionales
+  // (`if (unlockForm)` más abajo) para no romper el script si todavía no
+  // se agregó el markup en index.html.
+  const unlockForm      = document.getElementById('unlockForm');
+  const unlockPassword  = document.getElementById('unlockPassword');
+  const unlockError     = document.getElementById('unlockError');
 
   /* =====================================================================
    * BLOQUEO / DESBLOQUEO
@@ -132,12 +143,19 @@
     requestAnimationFrame(() => {
       overlay.classList.add('visible');
       overlay.setAttribute('aria-hidden', 'false');
+      if (unlockPassword) {
+        unlockPassword.value = '';
+        if (unlockError) unlockError.textContent = '';
+        unlockPassword.focus();
+      }
     });
   }
 
+  // Solo se llama tras validar la contraseña correcta (ver unlockForm).
   function unlock() {
     if (!locked) return;
     locked = false;
+    consecutiveRealSteps = 0; // exige una racha nueva de REAL_STEPS_TO_LOCK si vuelve a caminar
     requestAnimationFrame(() => {
       overlay.classList.remove('visible');
       overlay.setAttribute('aria-hidden', 'true');
@@ -145,10 +163,29 @@
   }
 
   /* =====================================================================
+   * FORMULARIO DE DESBLOQUEO (dentro de #lockOverlay)
+   * ===================================================================== */
+  if (unlockForm) {
+    unlockForm.addEventListener('submit', (ev) => {
+      ev.preventDefault();
+      const entered = unlockPassword ? unlockPassword.value : '';
+      if (entered === UNLOCK_PASSWORD) {
+        unlock();
+      } else {
+        if (unlockError) unlockError.textContent = 'Contraseña incorrecta';
+        if (unlockPassword) {
+          unlockPassword.value = '';
+          unlockPassword.focus();
+        }
+      }
+    });
+  }
+
+  /* =====================================================================
    * RACHA DE PASOS REALES -> BLOQUEO
    * Se llama una vez por cada paso real confirmado (detectado por
-   * acelerómetro fuera de rotación/cooldown, o simulado). Lleva la cuenta
-   * de la racha y dispara el bloqueo al llegar a REAL_STEPS_TO_LOCK.
+   * acelerómetro fuera de rotación/cooldown). Lleva la cuenta de la racha
+   * y dispara el bloqueo al llegar a REAL_STEPS_TO_LOCK.
    * ===================================================================== */
   function registerRealStep(now) {
     const gapFromPrevious = now - lastRealStepTime;
@@ -260,57 +297,43 @@
   }
 
   function tick(now) {
-    if (simulationMode) {
-      // El slider fija la cadencia mostrada directamente y, además,
-      // simula pasos reales a ese ritmo (mismo camino que registerRealStep
-      // usa para pasos reales) para poder probar la racha de
-      // REAL_STEPS_TO_LOCK sin caminar con el dispositivo.
-      cadenceSpm = simulatedCadence;
-      if (simulatedCadence > 0) {
-        const simulatedStepIntervalMs = 60000 / simulatedCadence;
-        if (now - lastRealStepTime >= simulatedStepIntervalMs) {
-          registerRealStep(now);
-        }
-      }
+    let magnitude;
+    if (latestAccel.hasData) {
+      magnitude = Math.sqrt(
+        latestAccel.x * latestAccel.x +
+        latestAccel.y * latestAccel.y +
+        latestAccel.z * latestAccel.z
+      );
     } else {
-      let magnitude;
-      if (latestAccel.hasData) {
-        magnitude = Math.sqrt(
-          latestAccel.x * latestAccel.x +
-          latestAccel.y * latestAccel.y +
-          latestAccel.z * latestAccel.z
-        );
-      } else {
-        // Fallback por orientación: convierte velocidad angular en un
-        // pseudo valor de magnitud de aceleración. Aproximación de
-        // relleno, no una medición física real.
-        magnitude = orientationRate * ORIENTATION_FALLBACK_SCALE;
-        orientationRate *= 0.5; // decae tras el pico para no quedar "pegado"
-      }
-
-      if (isRotatingInPlace()) {
-        // Girando sobre el propio eje: se descarta como candidato a paso y
-        // se rearma el pulso, para no contar un "paso" falso justo al
-        // terminar el giro (cuando la aceleración vuelve a bajar de golpe).
-        lastRotationTime = now;
-        inStepPulse = false;
-      } else if (now - lastRotationTime < ROTATION_COOLDOWN_MS) {
-        // Justo se dejó de girar: el frenado del giro puede producir un
-        // pico de aceleración que parece el inicio de un paso. Se sigue
-        // descartando un momento más antes de volver a detectar pasos.
-        inStepPulse = false;
-      } else {
-        detectStep(magnitude, now);
-      }
-      computeCadence(now);
+      // Fallback por orientación: convierte velocidad angular en un
+      // pseudo valor de magnitud de aceleración. Aproximación de
+      // relleno, no una medición física real.
+      magnitude = orientationRate * ORIENTATION_FALLBACK_SCALE;
+      orientationRate *= 0.5; // decae tras el pico para no quedar "pegado"
     }
 
-    // Si pasó demasiado tiempo sin un paso real nuevo, la racha se rompió:
-    // ya no hay una caminata sostenida en curso. Se reinicia el conteo y,
-    // si estaba bloqueado por ella, se desbloquea de inmediato.
+    if (isRotatingInPlace()) {
+      // Girando sobre el propio eje: se descarta como candidato a paso y
+      // se rearma el pulso, para no contar un "paso" falso justo al
+      // terminar el giro (cuando la aceleración vuelve a bajar de golpe).
+      lastRotationTime = now;
+      inStepPulse = false;
+    } else if (now - lastRotationTime < ROTATION_COOLDOWN_MS) {
+      // Justo se dejó de girar: el frenado del giro puede producir un
+      // pico de aceleración que parece el inicio de un paso. Se sigue
+      // descartando un momento más antes de volver a detectar pasos.
+      inStepPulse = false;
+    } else {
+      detectStep(magnitude, now);
+    }
+    computeCadence(now);
+
+    // Si pasó demasiado tiempo sin un paso real nuevo, la racha se rompió
+    // (la persona dejó de caminar): se reinicia el conteo. Esto YA NO
+    // desbloquea — una vez bloqueado, solo la contraseña correcta
+    // (unlockForm) puede desbloquear.
     if (now - lastRealStepTime > STEP_MAX_GAP_MS) {
       consecutiveRealSteps = 0;
-      if (locked) unlock();
     }
   }
 
@@ -404,24 +427,6 @@
   btnPermission.addEventListener('click', () => {
     btnPermission.disabled = true;
     requestMotionPermission();
-  });
-
-  /* =====================================================================
-   * MODO SIMULACIÓN (para probar sin caminar con el dispositivo)
-   * ===================================================================== */
-  simToggle.addEventListener('change', () => {
-    simulationMode = simToggle.checked;
-    simSlider.disabled = !simulationMode;
-    simBadge.textContent = simulationMode ? 'simulación on' : 'simulación off';
-    simBadge.classList.toggle('on', simulationMode);
-    if (simulationMode) {
-      sourceReadout.textContent = 'Slider (simulación)';
-    }
-  });
-
-  simSlider.addEventListener('input', () => {
-    simulatedCadence = parseFloat(simSlider.value);
-    simValue.textContent = Math.round(simulatedCadence) + ' pasos/min';
   });
 
   /* =====================================================================

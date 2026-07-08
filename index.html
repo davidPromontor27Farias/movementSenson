@@ -58,6 +58,19 @@
       <div class="icon">&#9888;</div>
       <h2>SISTEMA BLOQUEADO &ndash; Movimiento detectado</h2>
       <p>La interacción se restablecerá automáticamente al detenerse el movimiento.</p>
+      <form id="unlockForm" autocomplete="off">
+        <input
+          type="password"
+          id="unlockPassword"
+          placeholder="Contraseña"
+          autocomplete="new-password"
+          required
+        />
+
+        <button type="submit">Desbloquear</button>
+        <p id="unlockError" aria-alive="polite"></p>
+
+      </form>
     </div>
   </div>
 
