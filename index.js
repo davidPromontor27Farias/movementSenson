@@ -65,7 +65,7 @@
   // acomodarse) no llegan a acumular una racha real. El mismo hueco
   // (STEP_MAX_GAP_MS sin ningún paso nuevo) se usa para decidir que la
   // persona dejó de caminar y desbloquear de inmediato.
-  const REAL_STEPS_TO_LOCK = 6;
+  const REAL_STEPS_TO_LOCK = 5;
   const STEP_MAX_GAP_MS    = 900; // separación máxima entre pasos consecutivos de una misma racha
 
   const CADENCE_WINDOW_MS = 2000; // ventana deslizante solo para el indicador visual de pasos/min (no decide el bloqueo)
