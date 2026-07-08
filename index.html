@@ -11,8 +11,9 @@
   <div class="app">
     <h1>AccelLock — demo</h1>
     <p class="subtitle">
-      Bloquea la interfaz cuando detecta que la persona está caminando rápido
-      (por cadencia de pasos), no por manejar/mover la tablet parada.
+      Bloquea la interfaz cuando detecta 6 pasos reales seguidos y rítmicos
+      (un trayecto caminando), no por girar sobre el propio eje ni por
+      manejar/mover la tablet parada.
       El contenido de abajo es de relleno; solo importa el comportamiento del bloqueo.
     </p>
 
@@ -33,6 +34,10 @@
       <div class="card">
         <div class="label">Pasos totales</div>
         <div class="value" id="countReadout" style="font-size:0.95rem;">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Racha actual</div>
+        <div class="value" id="streakReadout" style="font-size:0.95rem;">0 / 6</div>
       </div>
     </div>
 

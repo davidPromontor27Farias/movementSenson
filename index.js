@@ -8,12 +8,17 @@
    * Enfoque: en vez de integrar la aceleración dos veces para estimar una
    * velocidad en km/h (poco confiable con un acelerómetro de mano — ver
    * historial del proyecto), se detectan PASOS por su firma característica
-   * (picos rítmicos de aceleración) y se bloquea según la CADENCIA
-   * (pasos/min), igual que un podómetro. Esto distingue de forma natural
-   * "la tablet se sacude un poco mientras se usa parado" (sin ritmo de
-   * pasos) de "la persona está caminando rápido" (pasos periódicos y
-   * sostenidos), que es el riesgo real que se quiere evitar en el
-   * almacén.
+   * (picos rítmicos de aceleración) y se bloquea tras contar una RACHA de
+   * REAL_STEPS_TO_LOCK pasos consecutivos y rítmicos (separados entre sí
+   * por un intervalo de gait plausible, ver STEP_MAX_GAP_MS), igual que un
+   * podómetro que exige varias zancadas seguidas antes de confiar en que
+   * hay una caminata en curso. Esto distingue "la tablet se sacude un poco
+   * o la persona gira sobre su propio eje" (picos aislados, sin racha
+   * sostenida) de "la persona está caminando un trayecto" (pasos
+   * periódicos y consecutivos), que es el riesgo real que se quiere evitar
+   * en el almacén. Si la racha se interrumpe (nadie da un paso real
+   * durante STEP_MAX_GAP_MS), se reinicia el conteo y, si estaba
+   * bloqueado, se desbloquea de inmediato.
    * ===================================================================== */
   const SAMPLE_INTERVAL_MS = 50;   // cadencia de muestreo/detección
   const UI_REFRESH_MS      = 100;  // refresco visual (no crítico, ahorra batería)
@@ -50,32 +55,20 @@
   // umbral, y ese pico por sí solo puede leerse como el inicio de un paso.
   const ROTATION_COOLDOWN_MS = 300;
 
-  // --- Cadencia y umbrales de bloqueo ------------------------------------
-  const CADENCE_WINDOW_MS   = 2000; // ventana deslizante para pasos/min
-  const FAST_WALK_LOCK_SPM  = 30;   // cadencia = "caminar rápido" -> bloquea (calibrado para este caso de uso)
-  const SLOW_WALK_UNLOCK_SPM = 20;  // cadencia por debajo de esto -> ya no es caminata rápida
-  // Entre 20 y 30 spm hay una zona muerta intencional (histéresis) para
-  // no parpadear bloqueo/desbloqueo justo en el borde.
+  // --- Racha de pasos reales -> bloqueo -----------------------------------
+  // Bloquea solo cuando se detectan REAL_STEPS_TO_LOCK pasos SEGUIDOS y
+  // RÍTMICOS: cada paso de la racha debe llegar dentro de STEP_MAX_GAP_MS
+  // desde el anterior (rango de gait plausible; por debajo lo filtra el
+  // refractario STEP_REFRACTORY_MS). Si el hueco entre dos pasos supera
+  // STEP_MAX_GAP_MS, la racha se corta y se vuelve a empezar desde 1 — un
+  // giro en el sitio o un par de pasos sueltos (esquivar algo,
+  // acomodarse) no llegan a acumular una racha real. El mismo hueco
+  // (STEP_MAX_GAP_MS sin ningún paso nuevo) se usa para decidir que la
+  // persona dejó de caminar y desbloquear de inmediato.
+  const REAL_STEPS_TO_LOCK = 6;
+  const STEP_MAX_GAP_MS    = 900; // separación máxima entre pasos consecutivos de una misma racha
 
-  // BUG que causaba el bloqueo al girar sobre el propio eje: con
-  // CADENCE_WINDOW_MS = 2000, cadenceSpm = pasos_en_ventana * 30. Un único
-  // pico falso (p. ej. al girar el cuerpo con el dispositivo en mano) ya
-  // arroja 30 spm y se sostiene hasta 2s en la ventana — tiempo de sobra
-  // para cumplir LOCK_SUSTAIN_MS (1.5s) SIN que la persona haya caminado
-  // un solo paso real. Se exige un mínimo de pasos reales y rítmicos
-  // dentro de la ventana antes de considerar válida la cadencia de
-  // bloqueo, para que un giro puntual (1-2 picos, sin ritmo sostenido) no
-  // baste para bloquear.
-  const MIN_STEPS_FOR_LOCK = 3;
-
-  // Cuánto tiempo debe sostenerse la condición antes de actuar. Bloquear
-  // requiere más tiempo sostenido que desbloquear: un par de pasos rápidos
-  // sueltos (esquivar algo, acomodarse) no debe bloquear la tablet, pero
-  // en cuanto deja de caminar rápido se quiere restaurar el acceso pronto.
-  const LOCK_SUSTAIN_MS   = 1500;
-  const UNLOCK_SUSTAIN_MS = 500;
-  const LOCK_CONSECUTIVE   = Math.round(LOCK_SUSTAIN_MS / SAMPLE_INTERVAL_MS);
-  const UNLOCK_CONSECUTIVE = Math.round(UNLOCK_SUSTAIN_MS / SAMPLE_INTERVAL_MS);
+  const CADENCE_WINDOW_MS = 2000; // ventana deslizante solo para el indicador visual de pasos/min (no decide el bloqueo)
 
   const ORIENTATION_FALLBACK_SCALE = 0.35; // escala empírica: grados/seg -> pseudo m/s^2
 
@@ -83,13 +76,13 @@
    * ESTADO
    * ===================================================================== */
   let cadenceSpm = 0;
-  let stepTimestamps = [];  // timestamps (performance.now()) de pasos dentro de la ventana
+  let stepTimestamps = [];  // timestamps (performance.now()) de pasos dentro de la ventana (solo para el indicador visual)
   let totalSteps = 0;
   let inStepPulse = false;
-  let lastStepTime = -Infinity;
 
-  let aboveCount = 0;
-  let belowCount = 0;
+  let lastRealStepTime = -Infinity;  // performance.now() del último paso real contado (racha + refractario)
+  let consecutiveRealSteps = 0;      // pasos seguidos y rítmicos acumulados en la racha actual
+
   let locked = false;
 
   let motionSupported = false;      // true en cuanto llega al menos un evento devicemotion útil
@@ -115,6 +108,7 @@
   const stateReadout    = document.getElementById('stateReadout');
   const sourceReadout   = document.getElementById('sourceReadout');
   const countReadout    = document.getElementById('countReadout'); // ahora muestra pasos totales
+  const streakReadout   = document.getElementById('streakReadout'); // racha de pasos reales consecutivos / umbral de bloqueo
   const btnPermission   = document.getElementById('btnPermission');
   const sensorBadge     = document.getElementById('sensorBadge');
   const simToggle       = document.getElementById('simToggle');
@@ -130,7 +124,7 @@
    * el siguiente frame de pintado (~16 ms a 60Hz): una vez que el sistema
    * DECIDE bloquear o desbloquear, la capa aparece/desaparece casi
    * instantáneamente. La latencia real está en decidir (ver
-   * LOCK_SUSTAIN_MS / UNLOCK_SUSTAIN_MS arriba), no en pintar la capa.
+   * REAL_STEPS_TO_LOCK / STEP_MAX_GAP_MS arriba), no en pintar la capa.
    * ===================================================================== */
   function lock() {
     if (locked) return;
@@ -151,23 +145,26 @@
   }
 
   /* =====================================================================
-   * MÁQUINA DE HISTÉRESIS (sobre cadencia, no velocidad)
+   * RACHA DE PASOS REALES -> BLOQUEO
+   * Se llama una vez por cada paso real confirmado (detectado por
+   * acelerómetro fuera de rotación/cooldown, o simulado). Lleva la cuenta
+   * de la racha y dispara el bloqueo al llegar a REAL_STEPS_TO_LOCK.
    * ===================================================================== */
-  function processCadenceSample(spm) {
-    // En modo simulación no hay stepTimestamps reales (el slider fija
-    // cadenceSpm directamente), así que el mínimo de pasos no aplica ahí.
-    const hasEnoughSteps = simulationMode || stepTimestamps.length >= MIN_STEPS_FOR_LOCK;
+  function registerRealStep(now) {
+    const gapFromPrevious = now - lastRealStepTime;
+    lastRealStepTime = now;
+    stepTimestamps.push(now);
+    totalSteps += 1;
 
-    if (spm >= FAST_WALK_LOCK_SPM && hasEnoughSteps) {
-      aboveCount += 1;
-      belowCount = 0;
-      if (aboveCount >= LOCK_CONSECUTIVE && !locked) lock();
-    } else if (spm <= SLOW_WALK_UNLOCK_SPM || !hasEnoughSteps) {
-      belowCount += 1;
-      aboveCount = 0;
-      if (belowCount >= UNLOCK_CONSECUTIVE && locked) unlock();
+    if (gapFromPrevious <= STEP_MAX_GAP_MS) {
+      consecutiveRealSteps += 1;
+    } else {
+      consecutiveRealSteps = 1; // primer paso de una posible nueva racha de caminata
     }
-    // en la zona muerta (20, 30), con suficientes pasos, no se tocan los contadores
+
+    if (consecutiveRealSteps >= REAL_STEPS_TO_LOCK && !locked) {
+      lock();
+    }
   }
 
   /* =====================================================================
@@ -246,11 +243,9 @@
    * ===================================================================== */
   function detectStep(magnitude, now) {
     if (!inStepPulse) {
-      if (magnitude >= STEP_TRIGGER_MS2 && (now - lastStepTime) >= STEP_REFRACTORY_MS) {
+      if (magnitude >= STEP_TRIGGER_MS2 && (now - lastRealStepTime) >= STEP_REFRACTORY_MS) {
         inStepPulse = true;
-        lastStepTime = now;
-        stepTimestamps.push(now);
-        totalSteps += 1;
+        registerRealStep(now);
       }
     } else if (magnitude <= STEP_RESET_MS2) {
       inStepPulse = false;
@@ -266,9 +261,17 @@
 
   function tick(now) {
     if (simulationMode) {
-      // En simulación, el slider fija la cadencia directamente; se
-      // respeta igual la cadencia de 50ms para el conteo de muestras.
+      // El slider fija la cadencia mostrada directamente y, además,
+      // simula pasos reales a ese ritmo (mismo camino que registerRealStep
+      // usa para pasos reales) para poder probar la racha de
+      // REAL_STEPS_TO_LOCK sin caminar con el dispositivo.
       cadenceSpm = simulatedCadence;
+      if (simulatedCadence > 0) {
+        const simulatedStepIntervalMs = 60000 / simulatedCadence;
+        if (now - lastRealStepTime >= simulatedStepIntervalMs) {
+          registerRealStep(now);
+        }
+      }
     } else {
       let magnitude;
       if (latestAccel.hasData) {
@@ -301,7 +304,14 @@
       }
       computeCadence(now);
     }
-    processCadenceSample(cadenceSpm);
+
+    // Si pasó demasiado tiempo sin un paso real nuevo, la racha se rompió:
+    // ya no hay una caminata sostenida en curso. Se reinicia el conteo y,
+    // si estaba bloqueado por ella, se desbloquea de inmediato.
+    if (now - lastRealStepTime > STEP_MAX_GAP_MS) {
+      consecutiveRealSteps = 0;
+      if (locked) unlock();
+    }
   }
 
   /* =====================================================================
@@ -313,6 +323,9 @@
     stateReadout.textContent = locked ? 'BLOQUEADO' : 'DESBLOQUEADO';
     stateReadout.className = 'value ' + (locked ? 'state-locked' : 'state-unlocked');
     countReadout.textContent = String(totalSteps);
+    if (streakReadout) {
+      streakReadout.textContent = consecutiveRealSteps + ' / ' + REAL_STEPS_TO_LOCK;
+    }
 
     chartHistory.push(cadenceSpm);
     chartHistory.shift();
