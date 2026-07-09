@@ -3,106 +3,162 @@
   'use strict';
 
 
-  // ============== PARÁMETROS ==============
+  // ============== PARÁMETROS DEL SENSOR ==============
 
-  const SAMPLE_INTERVAL_MS    = 50;
+  const SAMPLE_INTERVAL_MS         = 50;
 
-  const UI_REFRESH_MS         = 100;
+  const UI_REFRESH_MS              = 100;
 
+  const GRAVITY_FILTER_ALPHA       = 0.8;
 
-  const GRAVITY_FILTER_ALPHA  = 0.8;
+  const STEP_TRIGGER_MS2           = 1.3;     // umbral para detectar paso (m/s²)
 
-  const STEP_TRIGGER_MS2      = 1.3;
+  const STEP_RESET_MS2             = 0.7;
 
-  const STEP_RESET_MS2        = 0.7;
+  const STEP_REFRACTORY_MS         = 250;     // anti-rebote entre pasos
 
-  const STEP_REFRACTORY_MS    = 250;
+  const ROTATION_VETO_DPS          = 90;      // ignora pasos si rotas en sitio
 
-  const ROTATION_VETO_DPS     = 90;
+  const ROTATION_COOLDOWN_MS       = 300;
 
-  const ROTATION_COOLDOWN_MS  = 300;
+  const ORIENTATION_FALLBACK_SCALE = 0.35;   // respaldo sin acelerómetro lineal
 
-
-  const REAL_STEPS_TO_LOCK    = 5;
-
-  const STEP_MAX_GAP_MS       = 900;
-
-  const CADENCE_WINDOW_MS     = 2000;
+  const CADENCE_WINDOW_MS          = 2000;
 
 
-  const UNLOCK_PASSWORD       = 'imper2026';
+  // ============== BLOQUEO POR DISTANCIA ==============
+
+  const STEP_LENGTH_M              = 0.70;    // metros estimados por paso
+
+  const TARGET_DISTANCE_M          = 2.0;     // bloqueo al alcanzar 2 m
 
 
-  const ORIENTATION_FALLBACK_SCALE = 0.35;
+  // ============== AJUSTE #4: DECAY POR INACTIVIDAD ==============
+
+  const IDLE_DECAY_TIMEOUT_MS      = 30000;   // 30 s sin pasos -> empieza a olvidar
+
+  const IDLE_DECAY_RATE_MS         = 1000;    // aplica cada 1 s
+
+  const IDLE_DECAY_M_PER_TICK      = 0.10;    // 10 cm por segundo de decay
+
+
+  // ============== AJUSTE #3: LOG DE EVENTOS ==============
+
+  const LOCK_LOG_KEY               = 'accelLock_log';
+
+  const LOCK_LOG_MAX               = 50;
+
+
+  // ============== SEGURIDAD ==============
+
+  const UNLOCK_PASSWORD            = 'imper2026';
 
 
   // ============== ESTADO ==============
 
-  let cadenceSpm          = 0;
+  let cumulativeDistanceM  = 0;
 
-  let stepTimestamps      = [];
+  let cadenceSpm           = 0;
 
-  let totalSteps          = 0;
+  let stepTimestamps       = [];
 
-  let inStepPulse         = false;
+  let totalSteps           = 0;
 
-  let lastRealStepTime    = -Infinity;
+  let inStepPulse          = false;
 
-  let consecutiveRealSteps = 0;
+  let lastRealStepTime     = -Infinity;
 
-  let locked              = false;
+  let lastStepTimeForIdle  = performance.now();
 
+  let locked               = false;
 
-  let motionSupported     = false;
+  let motionSupported      = false;
 
-  let latestAccel         = { x: 0, y: 0, z: 0, hasData: false, isLinear: false };
+  let latestAccel          = { x: 0, y: 0, z: 0, hasData: false, isLinear: false };
 
-  let gravity             = { x: 0, y: 0, z: 0, ready: false };
+  let gravity              = { x: 0, y: 0, z: 0, ready: false };
 
-  let latestRotationRate  = { alpha: 0, beta: 0, gamma: 0, hasData: false };
-
+  let latestRotationRate   = { alpha: 0, beta: 0, gamma: 0, hasData: false };
 
   let lastOrientationSample = null;
 
-  let orientationRate     = 0;
+  let orientationRate      = 0;
 
-  let lastRotationTime    = -Infinity;
+  let lastRotationTime     = -Infinity;
 
+  let lastIntegrationTime  = 0;
 
-  let lastIntegrationTime = 0;
+  let lastUIUpdateTime     = 0;
 
-  let lastUIUpdateTime    = 0;
-
-
-  // ============== ELEMENTOS UI ==============
-
-  const overlay         = document.getElementById('lockOverlay');
-
-  const velReadout      = document.getElementById('velReadout');
-
-  const stateReadout    = document.getElementById('stateReadout');
-
-  const sourceReadout   = document.getElementById('sourceReadout');
-
-  const countReadout    = document.getElementById('countReadout');
-
-  const streakReadout   = document.getElementById('streakReadout');
-
-  const sensorBadge     = document.getElementById('sensorBadge');
-
-  const lockDot         = document.getElementById('lockDot');
+  let lastIdleDecayTime    = 0;
 
 
-  const unlockForm      = document.getElementById('unlockForm');
+  // ============== AJUSTE #3: HELPERS DE LOG ==============
 
-  const unlockPassword  = document.getElementById('unlockPassword');
+  function readLog()    { try { return JSON.parse(localStorage.getItem(LOCK_LOG_KEY) || '[]'); } catch (_) { return []; } }
 
-  const unlockError     = document.getElementById('unlockError');
+  function writeLog(a)  { try { localStorage.setItem(LOCK_LOG_KEY, JSON.stringify(a.slice(-LOCK_LOG_MAX))); } catch (_) {} }
+
+  function logLockEvent(reason, extra) {
+
+    const log = readLog();
+
+    log.push(Object.assign(
+
+      { at: new Date().toISOString(), reason, distanceM: cumulativeDistanceM.toFixed(2), steps: totalSteps },
+
+      extra || {}
+
+    ));
+
+    writeLog(log);
+
+  }
+
+  function lastLogLine() {
+
+    const log = readLog();
+
+    return log.length ? log[log.length - 1] : null;
+
+  }
 
 
-  const trackerForm     = document.getElementById('trackerForm');
+  // ============== ELEMENTOS UI (todos opcionales) ==============
 
-  const trackingInput   = document.getElementById('trackingInput');
+  const $ = (id) => document.getElementById(id);
+
+  const overlay           = $('lockOverlay');
+
+  const velReadout        = $('velReadout');
+
+  const stateReadout      = $('stateReadout');
+
+  const sourceReadout     = $('sourceReadout');
+
+  const countReadout      = $('countReadout');
+
+  const distanceReadout   = $('distanceReadout');
+
+  const distanceBar       = $('distanceBar');
+
+  const sensorBadge       = $('sensorBadge');
+
+  const lockDot           = $('lockDot');
+
+  const lastEventReadout  = $('lastEventReadout');
+
+  const unlockForm        = $('unlockForm');
+
+  const unlockPassword    = $('unlockPassword');
+
+  const unlockError       = $('unlockError');
+
+  const trackerForm       = $('trackerForm');
+
+  const trackingInput     = $('trackingInput');
+
+  const simStepBtn        = $('simStepBtn');
 
 
   // ============== LOCK / UNLOCK ==============
@@ -115,23 +171,60 @@
 
     requestAnimationFrame(() => {
 
-      overlay.classList.add('visible');
+      if (overlay) {
 
-      overlay.setAttribute('aria-hidden', 'false');
+        overlay.classList.add('visible');
+
+        overlay.setAttribute('aria-hidden', 'false');
+
+      }
 
       if (unlockPassword) {
 
         unlockPassword.value = '';
 
-        if (unlockError) unlockError.textContent = '';
+        if (unlockError) { unlockError.textContent = ''; unlockError.style.color = ''; }
 
         unlockPassword.focus();
 
       }
 
+
+      // -- AJUSTE #2: beep al bloquear --
+
+      try {
+
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        const o = ctx.createOscillator();
+
+        const g = ctx.createGain();
+
+        o.connect(g); g.connect(ctx.destination);
+
+        o.frequency.value = 440;
+
+        g.gain.setValueAtTime(0.25, ctx.currentTime);
+
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+
+        o.start(); o.stop(ctx.currentTime + 0.4);
+
+      } catch (_) {}
+
+
+      // -- AJUSTE #1: vibración al bloquear --
+
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+
+
       updateLockDot();
 
     });
+
+    // -- AJUSTE #3: registrar en log --
+
+    logLockEvent('cumulative-distance');
 
   }
 
@@ -142,15 +235,19 @@
 
     locked = false;
 
-    // exige una racha nueva si vuelve a caminar
+    cumulativeDistanceM = 0;
 
-    consecutiveRealSteps = 0;
+    lastStepTimeForIdle = performance.now();
 
     requestAnimationFrame(() => {
 
-      overlay.classList.remove('visible');
+      if (overlay) {
 
-      overlay.setAttribute('aria-hidden', 'true');
+        overlay.classList.remove('visible');
+
+        overlay.setAttribute('aria-hidden', 'true');
+
+      }
 
       updateLockDot();
 
@@ -169,33 +266,15 @@
 
       if (entered === UNLOCK_PASSWORD) {
 
-        if (unlockError) {
-
-          unlockError.style.color = '#57d38c';
-
-          unlockError.textContent = '✓ Acceso concedido';
-
-        }
+        if (unlockError) { unlockError.style.color = '#57d38c'; unlockError.textContent = '✓ Acceso concedido'; }
 
         setTimeout(unlock, 250);
 
       } else {
 
-        if (unlockError) {
+        if (unlockError) { unlockError.style.color = ''; unlockError.textContent = '✗ Contraseña incorrecta'; }
 
-          unlockError.style.color = '';
-
-          unlockError.textContent = '✗ Contraseña incorrecta';
-
-        }
-
-        if (unlockPassword) {
-
-          unlockPassword.value = '';
-
-          unlockPassword.focus();
-
-        }
+        if (unlockPassword) { unlockPassword.value = ''; unlockPassword.focus(); }
 
       }
 
@@ -203,8 +282,6 @@
 
   }
 
-
-  // ============== TRACKER (form del dashboard) ==============
 
   if (trackerForm) {
 
@@ -216,7 +293,7 @@
 
       if (guia) {
 
-        alert(`🔍 Buscando envío: ${guia}\n\n(En una versión real, aquí se conectaría al backend para mostrar el rastreo en tiempo real.)`);
+        alert('🔍 Buscando envío: ' + guia + '\n\n(En una versión real, aquí se conectaría al backend.)');
 
         if (trackingInput) trackingInput.value = '';
 
@@ -227,31 +304,43 @@
   }
 
 
+  // ============== BOTÓN DE PRUEBA ==============
+
+  if (simStepBtn) {
+
+    simStepBtn.addEventListener('click', () => {
+
+      cumulativeDistanceM += 1.0;
+
+      totalSteps += 1;
+
+      lastStepTimeForIdle = performance.now();
+
+      if (cumulativeDistanceM >= TARGET_DISTANCE_M && !locked) lock();
+
+      updateUI();
+
+    });
+
+  }
+
+
   // ============== DETECCIÓN DE PASOS ==============
 
   function registerRealStep(now) {
 
-    const gapFromPrevious = now - lastRealStepTime;
-
     lastRealStepTime = now;
+
+    lastStepTimeForIdle = now;            // reset del temporizador de inactividad
 
     stepTimestamps.push(now);
 
     totalSteps += 1;
 
-
-    if (gapFromPrevious <= STEP_MAX_GAP_MS) {
-
-      consecutiveRealSteps += 1;
-
-    } else {
-
-      consecutiveRealSteps = 1;
-
-    }
+    cumulativeDistanceM += STEP_LENGTH_M; // acumulamos distancia, no pasos sueltos
 
 
-    if (consecutiveRealSteps >= REAL_STEPS_TO_LOCK && !locked) {
+    if (cumulativeDistanceM >= TARGET_DISTANCE_M && !locked) {
 
       lock();
 
@@ -268,9 +357,7 @@
 
     if (!a || a.x == null) return;
 
-
     motionSupported = true;
-
 
     let lx, ly, lz;
 
@@ -284,9 +371,7 @@
 
       if (!gravity.ready) {
 
-        gravity.x = rx; gravity.y = ry; gravity.z = rz;
-
-        gravity.ready = true;
+        gravity.x = rx; gravity.y = ry; gravity.z = rz; gravity.ready = true;
 
       } else {
 
@@ -302,15 +387,9 @@
 
     }
 
-
     latestAccel = { x: lx, y: ly, z: lz, hasData: true, isLinear: linear };
 
-    if (sourceReadout) sourceReadout.textContent = linear
-
-      ? 'Acelerómetro (lineal)'
-
-      : 'Acelerómetro (+gravedad)';
-
+    if (sourceReadout) sourceReadout.textContent = linear ? 'Acelerómetro (lineal)' : 'Acelerómetro (+gravedad)';
 
     const rr = e.rotationRate;
 
@@ -329,9 +408,7 @@
 
     const { alpha, beta, gamma } = latestRotationRate;
 
-    const angularSpeed = Math.sqrt(alpha * alpha + beta * beta + gamma * gamma);
-
-    return angularSpeed >= ROTATION_VETO_DPS;
+    return Math.sqrt(alpha * alpha + beta * beta + gamma * gamma) >= ROTATION_VETO_DPS;
 
   }
 
@@ -340,13 +417,9 @@
 
     if (motionSupported) return;
 
-
     const t = performance.now();
 
-    const beta = e.beta || 0;
-
-    const gamma = e.gamma || 0;
-
+    const beta = e.beta || 0, gamma = e.gamma || 0;
 
     if (lastOrientationSample) {
 
@@ -394,11 +467,7 @@
 
   function computeCadence(now) {
 
-    while (stepTimestamps.length && now - stepTimestamps[0] > CADENCE_WINDOW_MS) {
-
-      stepTimestamps.shift();
-
-    }
+    while (stepTimestamps.length && now - stepTimestamps[0] > CADENCE_WINDOW_MS) stepTimestamps.shift();
 
     cadenceSpm = stepTimestamps.length * (60000 / CADENCE_WINDOW_MS);
 
@@ -411,15 +480,7 @@
 
     if (latestAccel.hasData) {
 
-      magnitude = Math.sqrt(
-
-        latestAccel.x * latestAccel.x +
-
-        latestAccel.y * latestAccel.y +
-
-        latestAccel.z * latestAccel.z
-
-      );
+      magnitude = Math.sqrt(latestAccel.x * latestAccel.x + latestAccel.y * latestAccel.y + latestAccel.z * latestAccel.z);
 
     } else {
 
@@ -429,36 +490,18 @@
 
     }
 
+    if (isRotatingInPlace()) { lastRotationTime = now; inStepPulse = false; }
 
-    if (isRotatingInPlace()) {
+    else if (now - lastRotationTime < ROTATION_COOLDOWN_MS) { inStepPulse = false; }
 
-      lastRotationTime = now;
-
-      inStepPulse = false;
-
-    } else if (now - lastRotationTime < ROTATION_COOLDOWN_MS) {
-
-      inStepPulse = false;
-
-    } else {
-
-      detectStep(magnitude, now);
-
-    }
+    else { detectStep(magnitude, now); }
 
     computeCadence(now);
-
-
-    if (now - lastRealStepTime > STEP_MAX_GAP_MS) {
-
-      consecutiveRealSteps = 0;
-
-    }
 
   }
 
 
-  // ============== UI UPDATE ==============
+  // ============== UI ==============
 
   function updateLockDot() {
 
@@ -466,7 +509,7 @@
 
     lockDot.classList.remove('on', 'locked');
 
-    if (locked)        lockDot.classList.add('locked');
+    if (locked) lockDot.classList.add('locked');
 
     else if (motionSupported) lockDot.classList.add('on');
 
@@ -475,7 +518,7 @@
 
   function updateUI() {
 
-    if (velReadout)    velReadout.textContent    = Math.round(cadenceSpm) + ' pasos/min';
+    if (velReadout)      velReadout.textContent      = Math.round(cadenceSpm) + ' pasos/min';
 
     if (stateReadout) {
 
@@ -485,14 +528,36 @@
 
     }
 
-    if (countReadout)  countReadout.textContent  = String(totalSteps);
+    if (countReadout)    countReadout.textContent    = String(totalSteps);
 
-    if (streakReadout) streakReadout.textContent = consecutiveRealSteps + ' / ' + REAL_STEPS_TO_LOCK;
+    if (distanceReadout) {
+
+      const dist = Math.min(cumulativeDistanceM, TARGET_DISTANCE_M);
+
+      distanceReadout.textContent = dist.toFixed(2) + ' / ' + TARGET_DISTANCE_M.toFixed(1) + ' m';
+
+    }
+
+    if (distanceBar) {
+
+      const pct = Math.min(100, (cumulativeDistanceM / TARGET_DISTANCE_M) * 100);
+
+      distanceBar.style.width = pct + '%';
+
+    }
+
+    if (lastEventReadout) {
+
+      const last = lastLogLine();
+
+      lastEventReadout.textContent = last ? (last.at.substr(11, 8) + ' · ' + last.reason) : '—';
+
+    }
 
   }
 
 
-  // ============== LOOP ==============
+  // ============== LOOP + AJUSTE #4: DECAY ==============
 
   function loop(now) {
 
@@ -507,6 +572,24 @@
 
     }
 
+
+    // Decaimiento por inactividad: si pasan >30s sin pasos y aún hay
+
+    // distancia acumulada, la reducimos 10 cm/s hasta llegar a 0.
+
+    if (!locked && cumulativeDistanceM > 0 &&
+
+        now - lastStepTimeForIdle > IDLE_DECAY_TIMEOUT_MS &&
+
+        now - lastIdleDecayTime    >= IDLE_DECAY_RATE_MS) {
+
+      lastIdleDecayTime = now;
+
+      cumulativeDistanceM = Math.max(0, cumulativeDistanceM - IDLE_DECAY_M_PER_TICK);
+
+    }
+
+
     if (now - lastUIUpdateTime >= UI_REFRESH_MS) {
 
       lastUIUpdateTime = now;
@@ -520,18 +603,12 @@
 
   // ============== SENSORES (INICIO AUTOMÁTICO) ==============
 
-  function setSensorBadge(text) {
-
-    if (!sensorBadge) return;
-
-    sensorBadge.textContent = text;
-
-  }
+  function setSensorBadge(text) { if (sensorBadge) sensorBadge.textContent = text; }
 
 
   function attachSensors() {
 
-    window.addEventListener('devicemotion',    onDeviceMotion,    { passive: true });
+    window.addEventListener('devicemotion',      onDeviceMotion,      { passive: true });
 
     window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true });
 
@@ -544,73 +621,45 @@
   }
 
 
-  /**
-
-   * Arranque 100% automático:
-
-   * - Android / desktop / navegadores sin restriction: inicia de inmediato.
-
-   * - iOS (DeviceMotionEvent.requestPermission): exige un gesto del usuario.
-
-   *   Como "gesto" usamos CUALQUIER click/touch/toque/key en el documento,
-
-   *   así el usuario NO tiene que buscar un botón específico.
-
-   */
-
   function autoStart() {
 
     const DME = window.DeviceMotionEvent;
 
     if (typeof DME !== 'undefined' && typeof DME.requestPermission === 'function') {
 
-      // iOS: necesita gesto del usuario. Instalamos listeners one-time
-
-      // en el documento. NO usamos un botón.
+      // iOS: cualquier click/touch/tecla activa el permiso
 
       setSensorBadge('toca para activar');
 
       const handler = async () => {
 
-        document.removeEventListener('click',     handler, true);
+        document.removeEventListener('click',      handler, true);
 
         document.removeEventListener('touchstart', handler, true);
 
-        document.removeEventListener('keydown',   handler, true);
+        document.removeEventListener('keydown',    handler, true);
 
         try {
 
           const result = await DME.requestPermission();
 
-          if (result === 'granted') {
+          if (result === 'granted') attachSensors();
 
-            attachSensors();
+          else setSensorBadge('permiso denegado');
 
-          } else {
-
-            setSensorBadge('permiso denegado');
-
-          }
-
-        } catch (err) {
-
-          setSensorBadge('error de permiso');
-
-        }
+        } catch (err) { setSensorBadge('error de permiso'); }
 
       };
 
-      document.addEventListener('click',     handler, true);
+      document.addEventListener('click',      handler, true);
 
       document.addEventListener('touchstart', handler, true);
 
-      document.addEventListener('keydown',   handler, true);
+      document.addEventListener('keydown',    handler, true);
 
     } else if ('DeviceMotionEvent' in window || 'DeviceOrientationEvent' in window) {
 
-      // Android / desktop: totalmente automático
-
-      attachSensors();
+      attachSensors(); // Android / desktop: inmediato
 
     } else {
 

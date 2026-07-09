@@ -248,25 +248,18 @@
   <!-- ============================================================
        CAPA DE BLOQUEO (cubre toda la pantalla cuando se activa)
        ============================================================ -->
-  <div id="lockOverlay" aria-hidden="true">
-    <div class="lock-card">
-      <div class="lock-icon">⚠</div>
-      <h2>SISTEMA BLOQUEADO</h2>
-      <p class="lock-sub">Movimiento detectado</p>
-      <p class="lock-desc">Ingresa la contraseña para volver a acceder al sistema de inventario.</p>
+  <div id="lockOverlay" style="position:fixed; inset:0; display:none; background:#000; z-index:9999;">
 
-      <form id="unlockForm" autocomplete="off">
-        <input
-          type="password"
-          id="unlockPassword"
-          placeholder="Contraseña"
-          autocomplete="new-password"
-          required
-        />
-        <button type="submit">🔓 Desbloquear</button>
-        <p id="unlockError" aria-live="polite"></p>
-      </form>
-    </div>
+    <form id="unlockForm">
+
+      <input type="password" id="unlockPassword" required />
+
+      <button type="submit">🔓 Desbloquear</button>
+
+      <p id="unlockError"></p>
+
+    </form>
+
   </div>
 
   <script src="index.js"></script>
