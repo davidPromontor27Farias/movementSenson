@@ -19,7 +19,7 @@
   const STEP_MAX_GAP_MS    = 900; 
   const CADENCE_WINDOW_MS = 2000; 
 
-  const UNLOCK_PASSWORD = 'Imperq3929planta';
+  const UNLOCK_PASSWORD = 'imper2026';
 
   const ORIENTATION_FALLBACK_SCALE = 0.35; 
 
