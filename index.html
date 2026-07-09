@@ -8,71 +8,75 @@
 </head>
 <body>
 
-  <div class="app">
-    <h1>LOGISTIQ</h1>
-    <p class="subtitle">
-      Lorem ipsum dolor sit amet consectetur adipisicing elit. Possimus aut,
-       soluta quam dicta enim tempora eos similique sapiente iure architecto est quos dolore doloribus consequatur numquam expedita porro ex vero.
-    </p>
+  <div id="lockContainer">
+    <div class="app">
+      <h1>LOGISTIQ</h1>
+      <p class="subtitle">
+        Lorem ipsum dolor sit amet consectetur adipisicing elit. Possimus aut,
+        soluta quam dicta enim tempora eos similique sapiente iure architecto est quos dolore doloribus consequatur numquam expedita porro ex vero.
+      </p>
 
-    <!-- Dashboard de relleno --------------------------------------------- -->
-    <div class="cards">
-      <div class="card">
-        <div class="label">Cadencia</div>
-        <div class="value" id="velReadout">0 pasos/min</div>
+      <!-- Dashboard de relleno --------------------------------------------- -->
+      <div class="cards">
+        <div class="card">
+          <div class="label">Cadencia</div>
+          <div class="value" id="velReadout">0 pasos/min</div>
+        </div>
+        <div class="card">
+          <div class="label">Estado</div>
+          <div class="value" id="stateReadout">Desbloqueado</div>
+        </div>
+        <div class="card">
+          <div class="label">Fuente de datos</div>
+          <div class="value" id="sourceReadout" style="font-size:0.95rem;">—</div>
+        </div>
+        <div class="card">
+          <div class="label">Pasos totales</div>
+          <div class="value" id="countReadout" style="font-size:0.95rem;">0</div>
+        </div>
       </div>
-      <div class="card">
-        <div class="label">Estado</div>
-        <div class="value" id="stateReadout">Desbloqueado</div>
-      </div>
-      <div class="card">
-        <div class="label">Fuente de datos</div>
-        <div class="value" id="sourceReadout" style="font-size:0.95rem;">—</div>
-      </div>
-      <div class="card">
-        <div class="label">Pasos totales</div>
-        <div class="value" id="countReadout" style="font-size:0.95rem;">0</div>
+
+      <canvas id="fillerChart" width="680" height="120"></canvas>
+
+      <!-- Panel de control ---------------------------------------------- -->
+      <div class="panel">
+        <h2>Control</h2>
+
+        <div class="row">
+          <button id="btnPermission">Activar sensores del dispositivo</button>
+          <span class="badge" id="sensorBadge">sensores inactivos</span>
+        </div>
       </div>
     </div>
 
-    <canvas id="fillerChart" width="680" height="120"></canvas>
+    <div id="lockOverlay" aria-hidden="true">
+      <div class="msg">
+        <div class="icon">&#9888;</div>
+        <h2>SISTEMA BLOQUEADO &ndash; Movimiento detectado</h2>
+        <p>Ingresa el password para volver a acceder al sistema de inventario.</p>
+        <form id="unlockForm" autocomplete="off">
+          <input
+            type="password"|
+            id="unlockPassword"
+            placeholder="Contraseña"
+            autocomplete="new-password"
+            required
+          />
 
-    <!-- Panel de control ---------------------------------------------- -->
-    <div class="panel">
-      <h2>Control</h2>
+          <button type="submit">Desbloquear</button>
+          <p id="unlockError" aria-alive="polite"></p>
 
-      <div class="row">
-        <button id="btnPermission">Activar sensores del dispositivo</button>
-        <span class="badge" id="sensorBadge">sensores inactivos</span>
+        </form>
       </div>
-
-
-
-
     </div>
+
+
+
   </div>
+
 
   <!-- Capa de bloqueo: contenido gené1rico de relleno ---------------------- -->
-  <div id="lockOverlay" aria-hidden="true">
-    <div class="msg">
-      <div class="icon">&#9888;</div>
-      <h2>SISTEMA BLOQUEADO &ndash; Movimiento detectado</h2>
-      <p>La interacción se restablecerá automáticamente al detenerse el movimiento.</p>
-      <form id="unlockForm" autocomplete="off">
-        <input
-          type="password"
-          id="unlockPassword"
-          placeholder="Contraseña"
-          autocomplete="new-password"
-          required
-        />
 
-        <button type="submit">Desbloquear</button>
-        <p id="unlockError" aria-alive="polite"></p>
-
-      </form>
-    </div>
-  </div>
 
 
   <script src="index.js"></script>
